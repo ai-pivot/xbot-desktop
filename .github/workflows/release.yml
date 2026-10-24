@@ -1,0 +1,124 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布的 tag（如 v0.1.24，必须与 package.json 版本一致）"
+        required: true
+      notes:
+        description: "更新说明（写入 latest.json 与 Release）"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: windows x64 build + publish
+    runs-on: windows-latest
+    env:
+      MINIO_ENDPOINT: ${{ secrets.MINIO_ENDPOINT }}
+      MINIO_ACCESS_KEY: ${{ secrets.MINIO_ACCESS_KEY }}
+      MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}
+      MINIO_BUCKET: ${{ secrets.MINIO_BUCKET }}
+      MINIO_PREFIX: ${{ secrets.MINIO_PREFIX }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - name: Unit tests
+        run: npm test
+      - name: Build frontend
+        run: npm run build
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          $pkg = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tag = "${{ inputs.tag || github.ref_name }}"
+          if ($tag -ne "v$pkg") {
+            throw "tag '$tag' does not match package.json version '$pkg' (expected v$pkg)"
+          }
+          "version=$pkg" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Build portable exe
+        working-directory: src-tauri
+        run: cargo build --release --features custom-protocol
+
+      - name: Package + hash
+        id: package
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.version.outputs.version }}"
+          $file = "xbot-desktop-tauri-$ver-win-x64.exe"
+          Copy-Item "src-tauri/target/release/xbot-desktop.exe" $file -Force
+          $sha = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+          $size = (Get-Item $file).Length
+          "file=$file" >> $env:GITHUB_OUTPUT
+          "sha=$sha" >> $env:GITHUB_OUTPUT
+          "size=$size" >> $env:GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          files: ${{ steps.package.outputs.file }}
+          body: |
+            ${{ inputs.notes }}
+
+            **SHA256** `${{ steps.package.outputs.sha }}`
+            **Size** `${{ steps.package.outputs.size }}` bytes
+          fail_on_unmatched_files: true
+
+      # Publishes the in-app updater manifest to MinIO. Skipped unless the
+      # repository has the MINIO_* secrets configured.
+      - name: Publish to MinIO
+        if: env.MINIO_ACCESS_KEY != ''
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          FILE: ${{ steps.package.outputs.file }}
+          SHA: ${{ steps.package.outputs.sha }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          Invoke-WebRequest -Uri "https://dl.min.io/client/mc/release/windows-amd64/mc.exe" -OutFile mc.exe
+          ./mc.exe alias set ci "$env:MINIO_ENDPOINT" "$env:MINIO_ACCESS_KEY" "$env:MINIO_SECRET_KEY"
+          $prefix = $env:MINIO_PREFIX.Trim('/')
+          $target = "ci/$($env:MINIO_BUCKET)/$prefix"
+          ./mc.exe cp "$env:FILE" "$target/" --overwrite
+          $base = $env:MINIO_ENDPOINT.TrimEnd('/')
+          $notes = if ($env:NOTES) { $env:NOTES } else { "Release $env:VERSION" }
+          $manifest = [ordered]@{
+            version      = $env:VERSION
+            url          = "$base/$($env:MINIO_BUCKET)/$prefix/$($env:FILE)"
+            sha256       = $env:SHA
+            notes        = $notes
+            published_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          } | ConvertTo-Json
+          Set-Content -Path latest.json -Value $manifest -Encoding utf8
+          ./mc.exe cp --attr "Content-Type=application/json" latest.json "$target/latest.json" --overwrite
+          Write-Output "published: $base/$($env:MINIO_BUCKET)/$prefix/latest.json"

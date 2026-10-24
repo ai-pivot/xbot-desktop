@@ -1,4 +1,5 @@
 mod api;
+mod logging;
 mod sse;
 mod state;
 mod update;
@@ -45,7 +46,9 @@ pub fn run() {
             update::app_version,
             update::check_update,
             update::download_update,
-            update::apply_update
+            update::apply_update,
+            logging::append_log,
+            logging::open_log
         ])
         .run(tauri::generate_context!())
         .expect("error while running xbot desktop");

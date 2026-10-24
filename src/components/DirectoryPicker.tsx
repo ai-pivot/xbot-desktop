@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ArrowUp, ChevronRight, CornerDownLeft, Folder, FolderOpen, Loader2, X } from "lucide-react";
 import { api } from "../api";
+import { logError } from "../log";
 import type { FsEntry } from "../types";
 
 export function DirectoryPicker({
@@ -27,6 +28,7 @@ export function DirectoryPicker({
       const entries = await api.listDir(path);
       setChildren((current) => ({ ...current, [path]: entries }));
     } catch (reason) {
+      logError("fs", reason, `list ${path}`);
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setLoading(false);
@@ -121,7 +123,7 @@ export function DirectoryPicker({
               加载目录…
             </div>
           )}
-          {!loading && children[rootPath]?.filter((entry) => entry.is_dir).length === 0 && (
+          {!loading && children[rootPath]?.filter((entry) => entry.isDir).length === 0 && (
             <div className="dir-empty">这个目录下没有子目录</div>
           )}
         </div>
@@ -167,7 +169,7 @@ function DirNode({
   const open = !!expanded[path];
   const entries = childrenByPath[path];
   const dirs = (entries ?? [])
-    .filter((entry) => entry.is_dir)
+    .filter((entry) => entry.isDir)
     .sort((a, b) => a.name.localeCompare(b.name));
 
   return (

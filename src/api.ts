@@ -66,6 +66,7 @@ export const api = {
     return result?.entries ?? [];
   },
   openExternal: (url: string) => invoke<void>("open_external", { url }),
+  openLog: () => invoke<string>("open_log"),
   startSse: (chatId: string, channel: string, lastSeq: number, epoch: number) =>
     invoke<void>("start_sse", { chatId, channel, lastSeq, epoch }),
   stopSse: () => invoke<void>("stop_sse"),

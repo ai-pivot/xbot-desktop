@@ -455,6 +455,19 @@ export function SettingsModal() {
                     新版本 {updateInfo.version}
                   </button>
                 )}
+                <button
+                  className="button ghost"
+                  onClick={async () => {
+                    try {
+                      const path = await api.openLog();
+                      setStatus(`日志：${path}`);
+                    } catch (error) {
+                      setStatus(`打开日志失败：${reason(error)}`);
+                    }
+                  }}
+                >
+                  打开日志
+                </button>
               </div>
             </Section>
           )}

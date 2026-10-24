@@ -274,10 +274,11 @@ export interface UpdateCheck {
 
 export interface FsEntry {
   name: string;
-  is_dir: boolean;
+  // The server returns camelCase JSON (isDir / modTime).
+  isDir: boolean;
   size: number;
   mode: string;
-  mod_time: string;
+  modTime: string;
 }
 
 export interface FsListResponse {

@@ -257,25 +257,9 @@ fn emit_status(app: &AppHandle, chat_id: &str, channel: &str, state: &str, messa
     );
 }
 
-/// Append an SSE lifecycle line to `%TEMP%\xbot-sse.log`, keeping it small.
-/// Connection flapping is invisible from the UI once it recovers, so this log
-/// is the only way to tell "the server dropped us" apart from "the indicator
-/// was stale".
+/// SSE lifecycle lines go to the shared client log (`%TEMP%\xbot-desktop.log`).
 fn log_event(chat_id: &str, channel: &str, event: &str, detail: &str) {
-    use std::io::Write;
-    let path = std::env::temp_dir().join("xbot-sse.log");
-    if let Ok(meta) = std::fs::metadata(&path) {
-        if meta.len() > 512 * 1024 {
-            let _ = std::fs::remove_file(&path);
-        }
-    }
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|value| value.as_millis())
-            .unwrap_or(0);
-        let _ = writeln!(file, "{ts} {chat_id} {channel} {event} {detail}");
-    }
+    crate::logging::append("sse", event, &format!("{chat_id} {channel} {detail}"));
 }
 
 async fn sleep_backoff(token: &CancellationToken, attempt: u32) -> bool {

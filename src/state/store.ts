@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api, onSse, onSseHeartbeat, onSseSeq, onSseStatus, onUpdateProgress } from "../api";
+import { logEvent } from "../log";
 import {
   clearCache,
   dropCache,
@@ -842,6 +843,7 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   setToast(toast) {
+    if (toast) logEvent("ui", toast);
     set({ toast });
   },
 
