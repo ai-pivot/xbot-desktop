@@ -96,8 +96,37 @@ src-tauri/           Rust 后端
   src/state.rs       AppState / CookieJar
 ```
 
+## CI
+
+两个 GitHub Actions 工作流（`.github/workflows/`）：
+
+- **check**：push / PR 到 `main` 时执行
+  - `frontend`：`npm ci` → `npm test` → `npm run build`
+  - `rust`：装 Tauri 的 Ubuntu 依赖后 `cargo check --release --features custom-protocol`
+- **release**：推送 `v*` tag（或手动 dispatch 指定 tag）时执行
+  - 校验 tag 与 `package.json` 版本一致
+  - `windows-latest` 上 `cargo build --release --features custom-protocol`
+  - 便携版 exe 附加到 GitHub Release（含 SHA256）
+  - 若仓库配置了下列 secrets，则同时上传 exe 到 MinIO 并更新 `latest.json`：
+
+| Secret | 说明 |
+|---|---|
+| `MINIO_ENDPOINT` | 例如 `https://minio.cjiw.site` |
+| `MINIO_ACCESS_KEY` | MinIO access key |
+| `MINIO_SECRET_KEY` | MinIO secret key |
+| `MINIO_BUCKET` | 例如 `uploads` |
+| `MINIO_PREFIX` | 例如 `share/xbot-desktop/tauri` |
+
+发版流程：
+
+```bash
+# 先把三处版本号改成同一个（package.json / tauri.conf.json / Cargo.toml）
+git tag v0.1.25 && git push origin v0.1.25
+```
+
 ## 验证
 
 - `npm run build`：TypeScript + Vite 构建通过
-- `npm test`：10 个测试通过（含跨会话串台回归测试）
-- `cargo check` / `cargo build --release`：Windows 1.99.1 编译通过
+- `npm test`：19 个测试通过（含缓存、rewind、跨会话串台回归测试）
+- `cargo check` / `cargo build --release`：Windows 原生编译通过
+- CI：`check` 工作流覆盖前端测试/构建与 `cargo check`
