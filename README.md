@@ -103,11 +103,16 @@ src-tauri/           Rust 后端
 - **check**：push / PR 到 `main` 时执行
   - `frontend`：`npm ci` → `npm test` → `npm run build`
   - `rust`：装 Tauri 的 Ubuntu 依赖后 `cargo check --release --features custom-protocol`
-- **release**：推送 `v*` tag（或手动 dispatch 指定 tag）时执行
+- **release**：推送 `v*` tag（或手动 dispatch 指定已存在的 tag）时执行
   - 校验 tag 与 `package.json` 版本一致
-  - `windows-latest` 上 `cargo build --release --features custom-protocol`
-  - 便携版 exe 附加到 GitHub Release（含 SHA256）
-  - 若仓库配置了下列 secrets，则同时上传 exe 到 MinIO 并更新 `latest.json`：
+  - 矩阵构建三个平台：
+    | 平台 | Runner | 产物 |
+    |---|---|---|
+    | Windows x64 | `windows-latest` | `xbot-desktop-tauri-<ver>-win-x64.exe`（便携版，供自动更新） |
+    | macOS arm64 | `macos-14` | `xbot-desktop-tauri-<ver>-macos-arm64.dmg` |
+    | Linux amd64 | `ubuntu-22.04` | `xbot-desktop-tauri-<ver>-linux-amd64.deb` |
+  - 全部产物 + `SHA256SUMS.txt` 附加到 GitHub Release
+  - 若仓库配置了下列 secrets，则同时上传三个产物到 MinIO 并更新 `latest.json`（仍指向 Windows exe）：
 
 | Secret | 说明 |
 |---|---|

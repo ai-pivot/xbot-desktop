@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "要发布的 tag（如 v0.1.24，必须与 package.json 版本一致）"
+        description: "要发布的 tag（如 v0.1.24，必须与 package.json 版本一致，且 tag 已存在）"
         required: true
       notes:
         description: "更新说明（写入 latest.json 与 Release）"
@@ -21,15 +21,56 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  windows:
-    name: windows x64 build + publish
-    runs-on: windows-latest
-    env:
-      MINIO_ENDPOINT: ${{ secrets.MINIO_ENDPOINT }}
-      MINIO_ACCESS_KEY: ${{ secrets.MINIO_ACCESS_KEY }}
-      MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}
-      MINIO_BUCKET: ${{ secrets.MINIO_BUCKET }}
-      MINIO_PREFIX: ${{ secrets.MINIO_PREFIX }}
+  prepare:
+    name: resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      notes: ${{ steps.version.outputs.notes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Validate tag against package.json
+        id: version
+        shell: bash
+        run: |
+          pkg=$(node -p "require('./package.json').version")
+          tag="${{ inputs.tag || github.ref_name }}"
+          if [ "$tag" != "v$pkg" ]; then
+            echo "tag '$tag' does not match package.json version '$pkg' (expected v$pkg)" >&2
+            exit 1
+          fi
+          echo "version=$pkg" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          {
+            echo "notes<<EOF"
+            echo "${{ inputs.notes }}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build ${{ matrix.name }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: windows
+          - name: macos-arm64
+            os: macos-14
+            target: aarch64-apple-darwin
+            artifact: macos
+          - name: linux-amd64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            artifact: linux
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,79 +87,153 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+      # deb packaging needs the WebKitGTK/GTK stack.
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          key: ${{ matrix.target }}
 
-      - name: Resolve version
-        id: version
-        shell: pwsh
-        run: |
-          $pkg = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          $tag = "${{ inputs.tag || github.ref_name }}"
-          if ($tag -ne "v$pkg") {
-            throw "tag '$tag' does not match package.json version '$pkg' (expected v$pkg)"
-          }
-          "version=$pkg" >> $env:GITHUB_OUTPUT
-          "tag=$tag" >> $env:GITHUB_OUTPUT
-
-      - name: Build portable exe
+      # Windows keeps the portable exe the in-app updater expects.
+      - name: Build Windows portable exe
+        if: matrix.os == 'windows-latest'
         working-directory: src-tauri
         run: cargo build --release --features custom-protocol
 
-      - name: Package + hash
-        id: package
-        shell: pwsh
+      - name: Build macOS dmg
+        if: matrix.os == 'macos-14'
+        run: npx tauri build --target ${{ matrix.target }} --bundles dmg
+
+      - name: Build Linux deb
+        if: matrix.os == 'ubuntu-22.04'
+        run: npx tauri build --target ${{ matrix.target }} --bundles deb
+
+      - name: Collect artifacts
+        shell: bash
         run: |
-          $ver = "${{ steps.version.outputs.version }}"
-          $file = "xbot-desktop-tauri-$ver-win-x64.exe"
-          Copy-Item "src-tauri/target/release/xbot-desktop.exe" $file -Force
-          $sha = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
-          $size = (Get-Item $file).Length
-          "file=$file" >> $env:GITHUB_OUTPUT
-          "sha=$sha" >> $env:GITHUB_OUTPUT
-          "size=$size" >> $env:GITHUB_OUTPUT
+          set -euo pipefail
+          mkdir -p dist-ci
+          version="${{ needs.prepare.outputs.version }}"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cp "src-tauri/target/release/xbot-desktop.exe" "dist-ci/xbot-desktop-tauri-${version}-win-x64.exe"
+          elif [ "${{ matrix.os }}" = "macos-14" ]; then
+            dmg=$(find src-tauri/target -path "*/bundle/dmg/*.dmg" | head -1)
+            test -n "$dmg"
+            cp "$dmg" "dist-ci/xbot-desktop-tauri-${version}-macos-arm64.dmg"
+          else
+            deb=$(find src-tauri/target -path "*/bundle/deb/*.deb" | head -1)
+            test -n "$deb"
+            cp "$deb" "dist-ci/xbot-desktop-tauri-${version}-linux-amd64.deb"
+          fi
+          ls -l dist-ci
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifact-${{ matrix.artifact }}
+          path: dist-ci/*
+          if-no-files-found: error
+
+  publish:
+    name: publish release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    env:
+      MINIO_ENDPOINT: ${{ secrets.MINIO_ENDPOINT }}
+      MINIO_ACCESS_KEY: ${{ secrets.MINIO_ACCESS_KEY }}
+      MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}
+      MINIO_BUCKET: ${{ secrets.MINIO_BUCKET }}
+      MINIO_PREFIX: ${{ secrets.MINIO_PREFIX }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: artifact-*
+          merge-multiple: true
+          path: dist-ci
+
+      - name: List artifacts + hashes
+        id: hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist-ci
+          ls -l
+          sha256sum xbot-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          for f in xbot-desktop-tauri-*-win-x64.exe; do echo "win_sha=$(sha256sum "$f" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"; done
+          for f in xbot-desktop-tauri-*-macos-arm64.dmg; do echo "mac_sha=$(sha256sum "$f" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"; done
+          for f in xbot-desktop-tauri-*-linux-amd64.deb; do echo "linux_sha=$(sha256sum "$f" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"; done
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: ${{ steps.version.outputs.tag }}
-          files: ${{ steps.package.outputs.file }}
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: ${{ needs.prepare.outputs.tag }}
+          files: dist-ci/*
           body: |
-            ${{ inputs.notes }}
+            ${{ needs.prepare.outputs.notes }}
 
-            **SHA256** `${{ steps.package.outputs.sha }}`
-            **Size** `${{ steps.package.outputs.size }}` bytes
+            | 文件 | SHA256 |
+            |---|---|
+            | `xbot-desktop-tauri-${{ needs.prepare.outputs.version }}-win-x64.exe` | `${{ steps.hashes.outputs.win_sha }}` |
+            | `xbot-desktop-tauri-${{ needs.prepare.outputs.version }}-macos-arm64.dmg` | `${{ steps.hashes.outputs.mac_sha }}` |
+            | `xbot-desktop-tauri-${{ needs.prepare.outputs.version }}-linux-amd64.deb` | `${{ steps.hashes.outputs.linux_sha }}` |
           fail_on_unmatched_files: true
 
-      # Publishes the in-app updater manifest to MinIO. Skipped unless the
-      # repository has the MINIO_* secrets configured.
+      # The in-app updater is Windows-only: latest.json always points at the
+      # portable exe; the dmg/deb are published as plain downloads.
       - name: Publish to MinIO
         if: env.MINIO_ACCESS_KEY != ''
-        shell: pwsh
+        shell: bash
         env:
-          VERSION: ${{ steps.version.outputs.version }}
-          FILE: ${{ steps.package.outputs.file }}
-          SHA: ${{ steps.package.outputs.sha }}
-          NOTES: ${{ inputs.notes }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          NOTES: ${{ needs.prepare.outputs.notes }}
         run: |
-          Invoke-WebRequest -Uri "https://dl.min.io/client/mc/release/windows-amd64/mc.exe" -OutFile mc.exe
-          ./mc.exe alias set ci "$env:MINIO_ENDPOINT" "$env:MINIO_ACCESS_KEY" "$env:MINIO_SECRET_KEY"
-          $prefix = $env:MINIO_PREFIX.Trim('/')
-          $target = "ci/$($env:MINIO_BUCKET)/$prefix"
-          ./mc.exe cp "$env:FILE" "$target/" --overwrite
-          $base = $env:MINIO_ENDPOINT.TrimEnd('/')
-          $notes = if ($env:NOTES) { $env:NOTES } else { "Release $env:VERSION" }
-          $manifest = [ordered]@{
-            version      = $env:VERSION
-            url          = "$base/$($env:MINIO_BUCKET)/$prefix/$($env:FILE)"
-            sha256       = $env:SHA
-            notes        = $notes
-            published_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-          } | ConvertTo-Json
-          Set-Content -Path latest.json -Value $manifest -Encoding utf8
-          ./mc.exe cp --attr "Content-Type=application/json" latest.json "$target/latest.json" --overwrite
-          Write-Output "published: $base/$($env:MINIO_BUCKET)/$prefix/latest.json"
+          set -euo pipefail
+          curl -sSLo mc https://dl.min.io/client/mc/release/linux-amd64/mc
+          chmod +x mc
+          ./mc alias set ci "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"
+          prefix="${MINIO_PREFIX%/}"
+          target="ci/$MINIO_BUCKET/$prefix"
+
+          exe="dist-ci/xbot-desktop-tauri-$VERSION-win-x64.exe"
+          dmg="dist-ci/xbot-desktop-tauri-$VERSION-macos-arm64.dmg"
+          deb="dist-ci/xbot-desktop-tauri-$VERSION-linux-amd64.deb"
+          sha=$(sha256sum "$exe" | cut -d' ' -f1)
+
+          ./mc cp "$exe" "$target/" --overwrite
+          ./mc cp "$dmg" "$target/" --overwrite
+          ./mc cp "$deb" "$target/" --overwrite
+
+          base="${MINIO_ENDPOINT%/}"
+          notes="${NOTES:-Release $VERSION}"
+          node -e '
+            const fs = require("fs");
+            const [version, base, bucket, prefix, sha, notes] = process.argv.slice(1);
+            fs.writeFileSync("latest.json", JSON.stringify({
+              version,
+              url: `${base}/${bucket}/${prefix}/xbot-desktop-tauri-${version}-win-x64.exe`,
+              sha256: sha,
+              notes,
+              published_at: new Date().toISOString(),
+            }, null, 2) + "\n");
+          ' "$VERSION" "$base" "$MINIO_BUCKET" "$prefix" "$sha" "$notes"
+          ./mc cp --attr "Content-Type=application/json" latest.json "$target/latest.json" --overwrite
+          echo "published: $base/$MINIO_BUCKET/$prefix/latest.json"
