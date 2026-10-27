@@ -17,7 +17,29 @@ import { Markdown } from "./Markdown";
 
 export const TurnView = memo(function TurnView({ turn }: { turn: TurnUi }) {
   const rewindTurn = useStore((state) => state.rewindTurn);
+  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
   const assistantText = assistantTextOf(turn);
+  const running = turn.iterations.some((iteration) => !iteration.done);
+  // Follow the live state until the user explicitly toggles the strip: running
+  // turns expand so streaming stays visible, finished turns collapse to one line.
+  const expanded = manualOpen ?? running;
+  const reasoningCount = turn.iterations.filter((iteration) =>
+    (iteration.reasoning ?? "").trim(),
+  ).length;
+  const toolCount = turn.iterations.reduce((sum, iteration) => sum + iteration.tools.length, 0);
+  const elapsedMs = turn.iterations.reduce(
+    (sum, iteration) => sum + iteration.tools.reduce((value, tool) => value + tool.elapsedMs, 0),
+    0,
+  );
+  const hasProcess = reasoningCount > 0 || toolCount > 0 || turn.iterations.length > 1;
+  const stats = [
+    reasoningCount > 0 ? `思考 ${reasoningCount} 段` : "",
+    toolCount > 0 ? `工具 ${toolCount} 次` : "",
+    elapsedMs > 0 ? formatDuration(elapsedMs) : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
     <article className="turn" data-turn-id={turn.turnId}>
       {turn.userText && (
@@ -53,15 +75,31 @@ export const TurnView = memo(function TurnView({ turn }: { turn: TurnUi }) {
         </div>
       )}
 
-      {/* One continuous assistant message: iterations are internal steps, not
-          separate cards. Only their content/reasoning/tools are rendered, in
-          order, with no per-iteration chrome. */}
       <div className="assistant-body">
-        {turn.iterations.map((iteration) => (
-          <IterationFlow key={iteration.index} iteration={iteration} />
-        ))}
+        {hasProcess && (
+          <button
+            className="process-strip"
+            onClick={() => setManualOpen(!expanded)}
+            title={expanded ? "收起过程" : "展开过程"}
+          >
+            <span className={`chevron ${expanded ? "open" : ""}`}>
+              <ChevronDown size={12} />
+            </span>
+            {running && <Loader2 size={12} className="spin" />}
+            <span>{stats || (running ? "处理中…" : "过程")}</span>
+          </button>
+        )}
 
-        {turnShowsFinalText(turn) && <Markdown content={turn.finalText} />}
+        {hasProcess && expanded && (
+          <div className="process-body">
+            {turn.iterations.map((iteration) => (
+              <IterationFlow key={iteration.index} iteration={iteration} />
+            ))}
+          </div>
+        )}
+
+        {(!hasProcess || !expanded) && assistantText.trim() && <Markdown content={assistantText} />}
+        {hasProcess && expanded && turnShowsFinalText(turn) && <Markdown content={turn.finalText} />}
 
         {assistantText.trim() && (
           <div className="msg-actions assistant">

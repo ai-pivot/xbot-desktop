@@ -2324,3 +2324,35 @@ select {
   background: var(--surface-3);
   color: var(--text);
 }
+
+/* collapsed process summary (思考 + 工具 收成一行) */
+.process-strip {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 2px 8px 2px 4px;
+  border-radius: 7px;
+  color: var(--faint);
+  font-size: 10.5px;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.process-strip:hover {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.process-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 2px;
+}
+
+/* denser steps inside the expanded timeline */
+.process-body .tool-head {
+  min-height: 30px;
+  padding: 3px 8px;
+}
