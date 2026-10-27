@@ -281,6 +281,18 @@ export function applyProgress(state: ChatState, progress: ProgressEvent): ChatSt
   const index = progress.iteration > 0 ? progress.iteration : fallbackIteration || 1;
 
   next = ensureTurn(next, turnId, "");
+  // Only the newest iteration of a turn can still be running. Without this,
+  // every empty intermediate iteration stayed `done: false` forever and each
+  // one rendered its own "思考中…" block.
+  next = updateTurn(next, turnId, (turn) => {
+    if (!turn.iterations.some((iteration) => iteration.index < index && !iteration.done)) return turn;
+    return {
+      ...turn,
+      iterations: turn.iterations.map((iteration) =>
+        iteration.index < index && !iteration.done ? { ...iteration, done: true } : iteration,
+      ),
+    };
+  });
   next = updateTurn(next, turnId, (turn) => {
     const existing = turn.iterations.find((iteration) => iteration.index === index);
     let iteration: IterationUi = existing ?? { index, content: "", reasoning: "", tools: [], done: false };

@@ -76,6 +76,23 @@ describe("chat reducer", () => {
     expect(state.askUser?.questions[0].question).toBe("pick");
   });
 
+  it("marks earlier iterations done when the next one starts", () => {
+    // Regression: empty intermediate iterations stayed "running" forever, so
+    // every one of them rendered its own 思考中 block.
+    let state = emptyChat("c1", "web");
+    state = applyEvent(state, {
+      type: "progress_structured",
+      progress: { turn_id: 5, iteration: 1, phase: "running", content: "" } as never,
+    });
+    state = applyEvent(state, {
+      type: "progress_structured",
+      progress: { turn_id: 5, iteration: 2, stream_content: "next" } as never,
+    });
+    const turn = state.turns[0];
+    expect(turn.iterations.find((iteration) => iteration.index === 1)?.done).toBe(true);
+    expect(turn.iterations.find((iteration) => iteration.index === 2)?.done).toBe(false);
+  });
+
   it("tracks queue snapshots and optimistic sends", () => {
     let state = applyEvent(emptyChat("c1", "web"), {
       type: "queue_state",

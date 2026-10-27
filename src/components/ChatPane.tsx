@@ -35,10 +35,10 @@ export function ChatPane() {
   const busy = chat.busy || chat.sessionRunning;
   const live = chat.turns.find((turn) => turn.turnId === chat.liveTurnId);
   const liveIteration = live?.iterations.find((iteration) => iteration.index === chat.liveIteration);
-  const showThinking =
-    busy &&
-    (!liveIteration ||
-      (!liveIteration.content && !liveIteration.reasoning && liveIteration.tools.length === 0));
+  // When the live iteration exists it renders its own "思考中…" while empty;
+  // this global placeholder is only for the gap before the first iteration
+  // snapshot arrives. Otherwise both show at once.
+  const showThinking = busy && !liveIteration;
 
   useEffect(() => {
     if (!chat.turns.length) return;
