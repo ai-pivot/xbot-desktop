@@ -106,9 +106,9 @@ interface Store {
   applyUpdate: () => Promise<void>;
   setUpdateOpen: (open: boolean) => void;
   newSession: (label: string, workDir: string) => Promise<void>;
-  renameSession: (label: string) => Promise<void>;
-  deleteSession: () => Promise<void>;
-  forkSession: (label: string) => Promise<void>;
+  renameSession: (label: string, target?: SessionNode) => Promise<void>;
+  deleteSession: (target?: SessionNode) => Promise<void>;
+  forkSession: (label: string, target?: SessionNode) => Promise<void>;
   loadModels: () => Promise<void>;
 }
 
@@ -868,11 +868,12 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
-  async renameSession(label) {
-    const { activeChatId, activeChannel } = get();
-    if (!activeChatId) return;
+  async renameSession(label, target) {
+    const chatId = target?.chat_id ?? get().activeChatId;
+    const channel = target?.channel ?? get().activeChannel;
+    if (!chatId) return;
     try {
-      await api.renameChat(activeChatId, activeChannel, label);
+      await api.renameChat(chatId, channel, label);
       dropCache("tree");
       await get().refreshSessions(false);
     } catch (error) {
@@ -880,31 +881,39 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
-  async deleteSession() {
-    const { activeChatId, activeChannel } = get();
-    if (!activeChatId) return;
+  async deleteSession(target) {
+    const chatId = target?.chat_id ?? get().activeChatId;
+    const channel = target?.channel ?? get().activeChannel;
+    if (!chatId) return;
     try {
-      await api.deleteChat(activeChatId, activeChannel);
-      // Invalidate any in-flight switch/reload for the session being deleted.
-      sessionEpoch += 1;
-      await api.stopSse().catch(() => undefined);
-      activeStream = null;
-      lastStreamAt = 0;
+      await api.deleteChat(chatId, channel);
       dropCache("tree");
-      set({ activeChatId: "", chat: emptyChat("", "web") });
-      await get().refreshSessions(false);
-      const next = get().sessions.find((node) => !node.parent_chat_id) ?? get().sessions[0];
-      if (next) await get().selectSession(next);
+      // Only tear down the live stream when the session on screen is the one
+      // being deleted; deleting from the menu of another row must not disturb
+      // the current conversation.
+      if (chatId === get().activeChatId) {
+        sessionEpoch += 1;
+        await api.stopSse().catch(() => undefined);
+        activeStream = null;
+        lastStreamAt = 0;
+        set({ activeChatId: "", chat: emptyChat("", "web") });
+        await get().refreshSessions(false);
+        const next = get().sessions.find((node) => !node.parent_chat_id) ?? get().sessions[0];
+        if (next) await get().selectSession(next);
+      } else {
+        await get().refreshSessions(false);
+      }
     } catch (error) {
       set({ toast: error instanceof Error ? error.message : String(error) });
     }
   },
 
-  async forkSession(label) {
-    const { activeChatId, activeChannel } = get();
-    if (!activeChatId) return;
+  async forkSession(label, target) {
+    const chatId = target?.chat_id ?? get().activeChatId;
+    const channel = target?.channel ?? get().activeChannel;
+    if (!chatId) return;
     try {
-      const fork = (await api.forkChat(activeChatId, activeChannel, label)) as {
+      const fork = (await api.forkChat(chatId, channel, label)) as {
         chat_id?: string;
       };
       dropCache("tree");

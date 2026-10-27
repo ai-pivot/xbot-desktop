@@ -1,19 +1,18 @@
 import { useMemo, useState } from "react";
 import {
   Bot,
-  GitFork,
   Loader2,
-  Pencil,
+  MoreVertical,
   Plus,
   RefreshCw,
   Search,
   Settings,
-  Trash2,
   X,
 } from "lucide-react";
 import { useStore } from "../state/store";
 import type { SessionNode } from "../types";
 import { ChatPane } from "./ChatPane";
+import { ContextMenu } from "./ContextMenu";
 import { DirectoryPicker } from "./DirectoryPicker";
 
 type DialogMode = "new" | "rename" | "fork";
@@ -33,9 +32,13 @@ export function Shell() {
   const serverUrl = useStore((state) => state.serverUrl);
 
   const [search, setSearch] = useState("");
-  const [dialog, setDialog] = useState<{ mode: DialogMode; value: string; workDir: string } | null>(
-    null,
-  );
+  const [dialog, setDialog] = useState<{
+    mode: DialogMode;
+    value: string;
+    workDir: string;
+    target: SessionNode | null;
+  } | null>(null);
+  const [menu, setMenu] = useState<{ node: SessionNode; x: number; y: number } | null>(null);
   const [dirPickerOpen, setDirPickerOpen] = useState(false);
 
   const active = sessions.find((node) => node.chat_id === activeChatId);
@@ -50,13 +53,20 @@ export function Shell() {
     );
   }, [sessions, search]);
 
-  const openDialog = (mode: DialogMode) => {
-    if ((mode === "rename" || mode === "fork") && !active) return;
+  const openDialog = (mode: DialogMode, target: SessionNode | null = null) => {
+    if ((mode === "rename" || mode === "fork") && !target) return;
+    setMenu(null);
     setDirPickerOpen(false);
     setDialog({
       mode,
-      value: mode === "new" ? "新会话" : mode === "fork" ? `${active?.label ?? ""} (fork)` : active?.label ?? "",
+      value:
+        mode === "new"
+          ? "新会话"
+          : mode === "fork"
+            ? `${target?.label ?? ""} (fork)`
+            : target?.label ?? "",
       workDir: "",
+      target,
     });
   };
 
@@ -65,8 +75,8 @@ export function Shell() {
     const value = dialog.value.trim();
     if (!value) return;
     if (dialog.mode === "new") void newSession(value, dialog.workDir.trim());
-    if (dialog.mode === "rename") void renameSession(value);
-    if (dialog.mode === "fork") void forkSession(value);
+    if (dialog.mode === "rename") void renameSession(value, dialog.target ?? undefined);
+    if (dialog.mode === "fork") void forkSession(value, dialog.target ?? undefined);
     setDialog(null);
   };
 
@@ -112,6 +122,7 @@ export function Shell() {
               node={node}
               active={node.chat_id === activeChatId}
               onSelect={() => void selectSession(node)}
+              onMenu={(x, y) => setMenu({ node, x, y })}
             />
           ))}
           {!filtered.length && (
@@ -124,24 +135,6 @@ export function Shell() {
               )}
             </div>
           )}
-        </div>
-
-        <div className="side-actions">
-          <button className="side-action" disabled={!active} onClick={() => openDialog("rename")}>
-            <Pencil size={13} />重命名
-          </button>
-          <button className="side-action" disabled={!active} onClick={() => openDialog("fork")}>
-            <GitFork size={13} />Fork
-          </button>
-          <button
-            className="side-action danger-text"
-            disabled={!active}
-            onClick={() => {
-              if (active && window.confirm(`确定删除会话「${active.label}」？`)) void deleteSession();
-            }}
-          >
-            <Trash2 size={13} />删除
-          </button>
         </div>
 
         <div className="side-footer">
@@ -174,6 +167,33 @@ export function Shell() {
             setDirPickerOpen(false);
           }}
           onClose={() => setDirPickerOpen(false)}
+        />
+      )}
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            {
+              label: "重命名",
+              action: () => openDialog("rename", menu.node),
+            },
+            {
+              label: "Fork 会话",
+              action: () => openDialog("fork", menu.node),
+            },
+            {
+              label: "删除",
+              danger: true,
+              action: () => {
+                if (window.confirm(`确定删除会话「${menu.node.label || menu.node.chat_id}」？`)) {
+                  void deleteSession(menu.node);
+                }
+              },
+            },
+          ]}
         />
       )}
 
@@ -240,17 +260,31 @@ function SessionItem({
   node,
   active,
   onSelect,
+  onMenu,
 }: {
   node: SessionNode;
   active: boolean;
   onSelect: () => void;
+  onMenu: (x: number, y: number) => void;
 }) {
   return (
-    <button
+    <div
       className={`session-item ${active ? "active" : ""}`}
       style={{ paddingLeft: 10 + node.depth * 14 }}
       onClick={onSelect}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onMenu(event.clientX, event.clientY);
+      }}
       title={node.chat_id}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
     >
       <div className="session-main">
         <div className="session-top">
@@ -262,8 +296,21 @@ function SessionItem({
       <div className="session-side">
         {node.running && <span className="running-dot" />}
         <span className="session-time">{formatTime(node.last_active)}</span>
+        <button
+          className="session-more"
+          title="会话操作"
+          aria-label="会话操作"
+          onClick={(event) => {
+            // Keep the row's select handler from firing.
+            event.stopPropagation();
+            const rect = event.currentTarget.getBoundingClientRect();
+            onMenu(rect.right - 6, rect.bottom + 2);
+          }}
+        >
+          <MoreVertical size={13} />
+        </button>
       </div>
-    </button>
+    </div>
   );
 }
 

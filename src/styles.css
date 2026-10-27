@@ -2282,3 +2282,45 @@ select {
   gap: 8px;
   margin-top: 10px;
 }
+
+/* per-session action menu */
+.session-item {
+  position: relative;
+  padding-right: 26px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.session-time {
+  transition: opacity 0.12s ease;
+}
+
+.session-item:hover .session-time {
+  opacity: 0;
+}
+
+.session-more {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 20px;
+  border-radius: 6px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--faint);
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.session-item:hover .session-more,
+.session-item.active .session-more,
+.session-more:focus-visible {
+  opacity: 1;
+}
+
+.session-more:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}

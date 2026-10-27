@@ -1,6 +1,6 @@
 [package]
 name = "xbot-desktop"
-version = "0.1.24"
+version = "0.1.25"
 description = "xbot desktop client"
 authors = ["xbot"]
 edition = "2021"
