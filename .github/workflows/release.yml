@@ -123,15 +123,21 @@ jobs:
         run: npx tauri build --target ${{ matrix.target }} --bundles dmg
 
       # Apple Silicon refuses to launch unsigned binaries ("xbot 已损坏").
-      # tauri.conf.json sets bundle.macOS.signingIdentity = "-" (ad-hoc), so
-      # fail the release if the .app inside the bundle is not validly signed.
+      # tauri.conf.json sets bundle.macOS.signingIdentity = "-" (ad-hoc).
+      # Tauri deletes the .app after packing the dmg, so verify the app that
+      # users actually download: mount the dmg, check the signature inside.
       - name: Verify macOS ad-hoc signature
         if: matrix.os == 'macos-14'
         run: |
-          app=$(find src-tauri/target -maxdepth 6 -path "*/bundle/macos/*.app" | head -1)
+          dmg=$(find src-tauri/target -maxdepth 6 -path "*/bundle/dmg/*.dmg" | head -1)
+          test -n "$dmg"
+          mount=/tmp/xbot-dmg
+          hdiutil attach "$dmg" -nobrowse -mountpoint "$mount"
+          app=$(find "$mount" -maxdepth 2 -name "*.app" | head -1)
           test -n "$app"
           codesign --verify --deep --strict --verbose=2 "$app"
           codesign --display --verbose=2 "$app" 2>&1 | head -6
+          hdiutil detach "$mount"
 
       - name: Build Linux deb
         if: matrix.os == 'ubuntu-22.04'
