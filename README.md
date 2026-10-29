@@ -112,6 +112,7 @@ src-tauri/           Rust 后端
     | macOS arm64 | `macos-14` | `xbot-desktop-tauri-<ver>-macos-arm64.dmg` |
     | Linux amd64 | `ubuntu-22.04` | `xbot-desktop-tauri-<ver>-linux-amd64.deb` |
   - 全部产物 + `SHA256SUMS.txt` 附加到 GitHub Release
+  - macOS 包使用 **ad-hoc 签名**（`bundle.macOS.signingIdentity = "-"`），否则 Apple Silicon 会报“已损坏”；CI 会先用 `codesign --verify --deep --strict` 校验再打包
   - 若仓库配置了下列 secrets，则同时上传三个产物到 MinIO 并更新 `latest.json`（仍指向 Windows exe）：
 
 | Secret | 说明 |
