@@ -5,6 +5,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Check, Copy } from "lucide-react";
 import { api } from "../api";
+import { normalizeMarkdown } from "../utils/markdown";
 
 export function Markdown({ content }: { content: string }) {
   if (!content?.trim()) return null;
@@ -37,7 +38,7 @@ export function Markdown({ content }: { content: string }) {
           ),
         }}
       >
-        {content}
+        {normalizeMarkdown(content)}
       </ReactMarkdown>
     </div>
   );
