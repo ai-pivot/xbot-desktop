@@ -76,6 +76,31 @@ describe("chat reducer", () => {
     expect(state.askUser?.questions[0].question).toBe("pick");
   });
 
+  it("defaults omitted ask_user options to an empty list", () => {
+    // Backend AskUserQuestion.Options uses `json:"options,omitempty"`, so a
+    // free-text question arrives without an `options` field. Rendering must
+    // not crash on `question.options.length`.
+    const state = applyEvent(emptyChat("c1", "web"), {
+      type: "ask_user",
+      progress: { request_id: "r2", questions: [{ question: "Continue?" }] } as never,
+    });
+    expect(state.askUser?.requestId).toBe("r2");
+    expect(state.askUser?.questions[0]).toEqual({
+      question: "Continue?",
+      options: [],
+      multi_select: false,
+      allow_other: false,
+    });
+  });
+
+  it("defaults omitted options in content-encoded ask_user questions", () => {
+    const state = applyEvent(emptyChat("c1", "web"), {
+      type: "ask_user",
+      content: JSON.stringify({ request_id: "r3", questions: [{ question: "Continue?" }] }),
+    });
+    expect(state.askUser?.questions[0].options).toEqual([]);
+  });
+
   it("marks earlier iterations done when the next one starts", () => {
     // Regression: empty intermediate iterations stayed "running" forever, so
     // every one of them rendered its own 思考中 block.

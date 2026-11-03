@@ -405,9 +405,44 @@ export function applySession(state: ChatState, message: WsMessage): ChatState {
   }
 }
 
+// Backend AskUserQuestion.Options is `json:"options,omitempty"`, so questions
+// without options omit the field entirely. Normalize at the parsing boundary
+// so the UI can always rely on `options` being an array (and never crash on
+// `question.options.length`).
+function normalizeQuestions(value: unknown): AskUserQuestion[] {
+  if (!Array.isArray(value)) return [];
+  const questions: AskUserQuestion[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const raw = item as Record<string, unknown>;
+    questions.push({
+      question: typeof raw.question === "string" ? raw.question : "",
+      options: Array.isArray(raw.options)
+        ? raw.options.filter((option): option is string => typeof option === "string")
+        : [],
+      multi_select: raw.multi_select === true,
+      allow_other: raw.allow_other === true,
+    });
+  }
+  return questions;
+}
+
+// `questions` may arrive as an array (progress events) or as a JSON string
+// (content / reconstituted events). Accept both shapes.
+function parseQuestions(value: unknown): AskUserQuestion[] {
+  if (typeof value === "string") {
+    try {
+      return normalizeQuestions(JSON.parse(value));
+    } catch {
+      return [];
+    }
+  }
+  return normalizeQuestions(value);
+}
+
 export function applyAskUser(state: ChatState, message: WsMessage): ChatState {
   const progress = message.progress;
-  let questions = progress?.questions ?? [];
+  let questions = parseQuestions(progress?.questions);
   let requestId = progress?.request_id ?? "";
   if (!questions.length) {
     const parsed = parseAskUserContent(message.content ?? "");
@@ -606,14 +641,13 @@ function upsertTurn(turns: TurnUi[], turn: TurnUi): TurnUi[] {
 export function parseAskUserContent(raw: string): { questions: AskUserQuestion[]; requestId: string } {
   if (!raw) return { questions: [], requestId: "" };
   try {
-    const object = JSON.parse(raw) as { request_id?: string; questions?: unknown };
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) {
+      return { questions: normalizeQuestions(parsed), requestId: "" };
+    }
+    const object = parsed as { request_id?: string; questions?: unknown };
     const requestId = typeof object.request_id === "string" ? object.request_id : "";
-    if (typeof object.questions === "string") {
-      return { questions: JSON.parse(object.questions) as AskUserQuestion[], requestId };
-    }
-    if (Array.isArray(object.questions)) {
-      return { questions: object.questions as AskUserQuestion[], requestId };
-    }
+    return { questions: parseQuestions(object.questions), requestId };
   } catch {
     // not JSON
   }
